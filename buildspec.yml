@@ -1,0 +1,47 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo "Getting git stuff in to work"
+      - curl -s -O -L  https://$GITHUB_TOKEN@raw.githubusercontent.com/sweet-io/devops-tools-and-scripts/master/ci/cd/codebuild-git-wrapper.sh
+      - chmod +x codebuild-git-wrapper.sh
+      - ./codebuild-git-wrapper.sh $DEPLOY_BRANCH
+      - echo Logging in to Amazon ECR...
+      - $(aws ecr get-login --region $AWS_DEFAULT_REGION --no-include-email)
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - COMMIT_TAG=$(git tag -l --points-at $CODEBUILD_RESOLVED_SOURCE_VERSION)
+      - IMAGE_TAG=$(if [[ $STAGE == "production" ]]; then echo ""; else echo $STAGE-; fi)$(if [ $COMMIT_TAG ]; then echo $COMMIT_TAG-; else echo ""; fi)${COMMIT_HASH:=latest}
+      - |
+        TARGETPLATFORM=$(echo "$CODEBUILD_BUILD_CONTAINER_IMAGE" | awk -F/ '{print $2}')
+
+        # Extracting OS information
+        TARGETOS="$CODEBUILD_BUILD_IMAGE_OS"
+        TARGETOSVERSION="$CODEBUILD_BUILD_IMAGE_OS_VERSION"
+
+        # Checking if the build environment is ARM64 or not
+        if [ "$CODEBUILD_BUILD_ARM" = "true" ]; then
+          TARGETARCH="arm64"
+        else
+          TARGETARCH="amd64"
+        fi
+  build:
+    commands:
+      - echo Building the Docker image...
+      - docker login --username sweetio -p $DOCKER_HUB_TOKEN
+      - docker pull $ECR_URL:latest || true
+      - docker build -t $ECR_URL:latest
+        --build-arg TARGETPLATFORM="$TARGETPLATFORM"
+        --build-arg TARGETOS="$TARGETOS"
+        --build-arg TARGETARCH="$TARGETARCH"
+        -f docker/Dockerfile .
+      - docker tag $ECR_URL:latest $ECR_URL:$IMAGE_TAG
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $ECR_URL:$IMAGE_TAG
+      - docker push $ECR_URL:latest
+      - echo Writing image definitions
+      - printf '[{"name":"ipfs-cluster","imageUri":"%s"}]' "$ECR_URL:$IMAGE_TAG" | tee imagedefinitions.json
+artifacts:
+  files: imagedefinitions.json
