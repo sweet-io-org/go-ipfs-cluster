@@ -33,7 +33,7 @@ phases:
         --build-arg TARGETPLATFORM="$TARGETPLATFORM"
         --build-arg TARGETOS="$TARGETOS"
         --build-arg TARGETARCH="$TARGETARCH"
-        -f docker/Dockerfile .
+        -f Dockerfile .
       - docker tag $ECR_URL:latest $ECR_URL:$IMAGE_TAG
   post_build:
     commands:
